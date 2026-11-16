@@ -4,7 +4,7 @@
 #   collector  -> one collector process (COLLECTOR_ID set by compose)
 set -eu
 
-mkdir -p "${SHARED_DIR:-/data/shared}" "$(dirname "${DB_PATH:-/data/warehouse/alarms.db}")"
+mkdir -p "${SHARED_DIR:-/data/shared}" "$(dirname "${DB_PATH:-/data/warehouse/alarms.db}")" "${EVIDENCE_DIR:-/data/evidence}"
 
 case "${1:-web}" in
   web)

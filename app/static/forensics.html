@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>取证打包 · 报警证据保全</title>
+<style>
+  :root { --bd:#d8dee9; --bg:#f7f9fc; --ac:#2563eb; --ok:#15803d; --warn:#b45309; --err:#b91c1c; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.5 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft Yahei",sans-serif; color:#1f2937; background:var(--bg); }
+  header { background:#111827; color:#fff; padding:14px 22px; display:flex; align-items:baseline; gap:16px; flex-wrap:wrap; }
+  header h1 { font-size:17px; margin:0; }
+  header a { color:#93c5fd; text-decoration:none; font-size:13px; }
+  header .auto { margin-left:auto; display:flex; gap:8px; align-items:center; font-size:13px; }
+  main { display:grid; grid-template-columns: 1fr; gap:16px; padding:16px 22px; }
+  .card { background:#fff; border:1px solid var(--bd); border-radius:10px; padding:14px 16px; }
+  .card h2 { font-size:15px; margin:0 0 10px; }
+  button { border:1px solid var(--ac); background:var(--ac); color:#fff; border-radius:7px; padding:7px 13px; cursor:pointer; font-size:13px; }
+  button.secondary { background:#fff; color:var(--ac); }
+  button:disabled { opacity:.45; cursor:default; }
+  input { padding:7px 9px; border:1px solid var(--bd); border-radius:7px; font-size:13px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px; align-items:center; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  th, td { border-bottom:1px solid #e5e7eb; padding:6px 8px; text-align:left; vertical-align:top; }
+  th { background:#f3f4f6; position:sticky; top:0; }
+  .pill { display:inline-block; padding:1px 8px; border-radius:999px; font-size:12px; }
+  .pill.ok { background:#dcfce7; color:var(--ok); }
+  .pill.warn { background:#fef3c7; color:var(--warn); }
+  .pill.err { background:#fee2e2; color:var(--err); }
+  .pill.run { background:#dbeafe; color:#1d4ed8; }
+  .muted { color:#6b7280; }
+  code { background:#f3f4f6; padding:1px 5px; border-radius:4px; }
+  pre { margin:0; white-space:pre-wrap; word-break:break-all; }
+  #toast { position:fixed; right:18px; bottom:18px; max-width:460px; }
+  .toast-item { background:#111827; color:#fff; border-radius:8px; padding:9px 13px; margin-top:8px; font-size:13px; }
+  .toast-item.err { background:var(--err); }
+  .detail { margin-top:10px; border-top:1px dashed var(--bd); padding-top:10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>报警取证 · 按设备 + UTC 闭区间打包 ZIP</h1>
+  <a href="/">← 返回采集控制台</a>
+  <div class="auto">
+    <label><input type="checkbox" id="auto" checked> 2 秒自动刷新</label>
+    <button class="secondary" onclick="refresh()">立即刷新</button>
+  </div>
+</header>
+
+<main>
+  <section class="card">
+    <h2>① 新建取证单（受理瞬间冻结同一入仓快照：明细 / 文件身份 / 已提交位点）</h2>
+    <div class="row">
+      <input id="device" placeholder="设备号 device_id（精确匹配）" size="22">
+      <input id="tFrom" placeholder="UTC 起（含） 2026-11-16T00:00:00Z" size="28">
+      <input id="tTo" placeholder="UTC 止（含） 2026-11-16T23:59:59Z" size="28">
+      <button onclick="createJob()">受理取证单</button>
+    </div>
+    <p class="muted" style="margin:4px 0 0">
+      包内仅含受理时各源件<b>已提交位点之前</b>的原始字节前缀（排除后续追加与无换行的未完成行），
+      附 <code>manifest.json</code> 明细、各件 SHA-256（<code>SHA256SUMS.txt</code>）；
+      逐条比对明细与包内字节，不符或读写失败则整单失败、不开放下载。
+    </p>
+  </section>
+
+  <section class="card">
+    <h2>② 取证单状态（可查原因、可下载；中断重启后的单子标失败，可重新取证）</h2>
+    <table><thead><tr>
+      <th>#</th><th>设备号</th><th>UTC 闭区间</th><th>状态</th><th>明细行</th><th>源件</th>
+      <th>前缀字节</th><th>ZIP 大小 / SHA-256</th><th>受理 (UTC)</th><th>完成 (UTC)</th><th>操作</th>
+    </tr></thead><tbody id="jobs"></tbody></table>
+    <div id="detail" class="detail" style="display:none">
+      <h2 id="detailTitle" style="margin-top:0"></h2>
+      <div id="detailReason"></div>
+      <h3 style="font-size:13.5px">源件快照（身份 / 受理时已提交位点 / 前缀 SHA-256）</h3>
+      <table><thead><tr><th>file_id</th><th>inode</th><th>受理时路径</th><th>前缀字节</th><th>SHA-256</th></tr></thead>
+        <tbody id="snaps"></tbody></table>
+      <h3 style="font-size:13.5px">明细（文件身份 + 字节位置 + 原文）</h3>
+      <table><thead><tr><th>file_id</th><th>行号</th><th>字节偏移</th><th>长度</th><th>UTC</th><th>报警码</th><th>原始行</th></tr></thead>
+        <tbody id="items"></tbody></table>
+    </div>
+  </section>
+</main>
+
+<div id="toast"></div>
+<script>
+const $ = id => document.getElementById(id);
+function toast(msg, isErr=false) {
+  const d = document.createElement('div');
+  d.className = 'toast-item' + (isErr ? ' err' : '');
+  d.textContent = msg; $('toast').appendChild(d);
+  setTimeout(() => d.remove(), 5000);
+}
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || r.statusText);
+  return data;
+}
+const post = (path, body) => api(path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})});
+function esc(s) { return String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function fmtBytes(n) {
+  if (n == null) return '';
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n/1024).toFixed(1) + ' KiB';
+  if (n < 1073741824) return (n/1048576).toFixed(1) + ' MiB';
+  return (n/1073741824).toFixed(2) + ' GiB';
+}
+function statusPill(s) {
+  const cls = s === 'succeeded' ? 'ok' : s === 'failed' ? 'err' : s === 'running' ? 'run' : 'warn';
+  return `<span class="pill ${cls}">${esc(s)}</span>`;
+}
+async function createJob() {
+  try {
+    const job = await post('/api/forensics/jobs', {
+      device_id: $('device').value.trim(),
+      event_utc_from: $('tFrom').value.trim(),
+      event_utc_to: $('tTo').value.trim(),
+    });
+    toast(`已受理取证单 ${job.job_uid.slice(0,8)}…，后台打包中`);
+    selectUid = job.job_uid;
+    refresh();
+  } catch (e) { toast(e.message, true); }
+}
+let selectUid = null;
+async function showJob(uid) {
+  selectUid = uid;
+  await refresh();
+}
+async function refresh() {
+  const jobs = await api('/api/forensics/jobs?limit=100');
+  $('jobs').innerHTML = jobs.items.length ? jobs.items.map(j => `
+    <tr>
+      <td>${j.id}</td><td>${esc(j.device_id)}</td>
+      <td class="muted">${esc(j.event_utc_from)}<br>${esc(j.event_utc_to)}</td>
+      <td>${statusPill(j.status)}</td>
+      <td>${j.item_count}</td><td>${j.file_count}</td><td>${fmtBytes(j.total_bytes)}</td>
+      <td>${j.zip_size ? fmtBytes(j.zip_size) + '<br><code style="font-size:11px">' + esc((j.zip_sha256||'').slice(0,16)) + '…</code>' : '—'}</td>
+      <td class="muted">${esc(j.requested_utc)}</td><td class="muted">${esc(j.finished_utc || '')}</td>
+      <td>
+        <button class="secondary" onclick="showJob('${j.job_uid}')">详情</button>
+        ${j.status === 'succeeded'
+          ? `<a href="/api/forensics/jobs/${j.job_uid}/download"><button>下载 ZIP</button></a>`
+          : `<button disabled title="仅成功后可下载">下载 ZIP</button>`}
+      </td>
+    </tr>`).join('')
+    : '<tr><td colspan="11" class="muted">暂无取证单</td></tr>';
+
+  if (!selectUid && jobs.items.length) selectUid = jobs.items[0].job_uid;
+  const cur = jobs.items.find(j => j.job_uid === selectUid);
+  if (!cur) { $('detail').style.display = 'none'; return; }
+  $('detail').style.display = 'block';
+  $('detailTitle').textContent = `取证单 ${cur.job_uid}（${cur.device_id}）`;
+  $('detailReason').innerHTML = cur.status === 'failed'
+    ? `<p><span class="pill err">失败原因</span> <pre>${esc(cur.failure_reason || '')}</pre></p>`
+    : cur.status === 'succeeded'
+      ? `<p class="muted">整单校验通过：明细逐行与包内字节一致，源前缀 SHA-256 与实时源件一致。ZIP 自身 SHA-256：<code>${esc(cur.zip_sha256||'')}</code></p>`
+      : `<p class="muted">打包进行中或排队中……</p>`;
+  const [snaps, items] = await Promise.all([
+    api(`/api/forensics/jobs/${cur.job_uid}/snapshots`),
+    api(`/api/forensics/jobs/${cur.job_uid}/items?limit=500`),
+  ]);
+  $('snaps').innerHTML = snaps.items.length ? snaps.items.map(s => `
+    <tr><td><code>${esc(s.file_id)}</code></td><td>${s.inode}</td>
+      <td class="muted">${esc(s.snapshot_path)}</td><td>${s.prefix_bytes}</td>
+      <td><code style="font-size:11px">${esc(s.prefix_sha256 || '（打包中）')}</code></td></tr>`).join('')
+    : '<tr><td colspan="5" class="muted">无源件（区间内无记录）</td></tr>';
+  $('items').innerHTML = items.items.length ? items.items.map(it => `
+    <tr><td><code>${esc(it.file_id)}</code></td><td>${it.line_no}</td>
+      <td>${it.byte_offset}</td><td>${it.byte_length}</td>
+      <td class="muted">${esc(it.event_utc)}</td><td>${esc(it.alarm_code)}</td>
+      <td><pre>${esc(it.raw_line)}</pre></td></tr>`).join('')
+    : '<tr><td colspan="7" class="muted">区间内无入仓记录</td></tr>';
+}
+$('auto').addEventListener('change', () => {
+  clearInterval(window._t);
+  if ($('auto').checked) window._t = setInterval(refresh, 2000);
+});
+window._t = setInterval(refresh, 2000);
+refresh().catch(e => toast(e.message, true));
+</script>
+</body>
+</html>

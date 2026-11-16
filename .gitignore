@@ -7,3 +7,8 @@ __pycache__/
 .DS_Store
 .venv/
 venv/
+
+# Forensic outputs live on the evidence volume; never commit packages/temps.
+*.zip
+.*.tmp.zip
+evidence/

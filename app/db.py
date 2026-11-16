@@ -74,6 +74,68 @@ CREATE TABLE IF NOT EXISTS ingest_errors (
 
 CREATE INDEX IF NOT EXISTS idx_alarms_file ON alarms (file_id, id);
 CREATE INDEX IF NOT EXISTS idx_alarms_device ON alarms (device_id, event_utc);
+
+-- ---------------------------------------------------------------------
+-- Forensic (evidence preservation) tables.
+--
+-- A forensics job is accepted against ONE warehouse snapshot: every row
+-- of ``forensics_items`` and ``forensics_file_snapshots`` is inserted in
+-- the same BEGIN IMMEDIATE transaction as the job row, so the manifest
+-- detail, source-file identities and committed byte positions all come
+-- from a single committed point in time.  The packer later copies only
+-- those frozen prefixes -- bytes appended afterwards and lines that never
+-- received a newline can never enter the package.
+
+CREATE TABLE IF NOT EXISTS forensics_jobs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_uid         TEXT    NOT NULL UNIQUE,
+    device_id       TEXT    NOT NULL,
+    event_utc_from  TEXT    NOT NULL,           -- inclusive UTC bound
+    event_utc_to    TEXT    NOT NULL,           -- inclusive UTC bound
+    status          TEXT    NOT NULL,           -- pending|running|succeeded|failed
+    failure_reason  TEXT,
+    item_count      INTEGER NOT NULL DEFAULT 0,
+    file_count      INTEGER NOT NULL DEFAULT 0,
+    total_bytes     INTEGER NOT NULL DEFAULT 0,
+    zip_path        TEXT,
+    zip_size        INTEGER,
+    zip_sha256      TEXT,
+    requested_utc   TEXT    NOT NULL,
+    started_utc     TEXT,
+    finished_utc    TEXT
+);
+
+CREATE TABLE IF NOT EXISTS forensics_file_snapshots (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id           INTEGER NOT NULL REFERENCES forensics_jobs(id),
+    file_id          TEXT    NOT NULL,          -- inode-based identity at acceptance
+    inode            INTEGER NOT NULL,
+    snapshot_path    TEXT    NOT NULL,          -- last_path at acceptance
+    prefix_bytes     INTEGER NOT NULL,          -- committed read_offset at acceptance
+    prefix_sha256    TEXT,                      -- filled while packing
+    UNIQUE (job_id, file_id)
+);
+
+CREATE TABLE IF NOT EXISTS forensics_items (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id       INTEGER NOT NULL REFERENCES forensics_jobs(id),
+    file_id      TEXT    NOT NULL,
+    line_no      INTEGER NOT NULL,
+    byte_offset  INTEGER NOT NULL,
+    byte_length  INTEGER NOT NULL,              -- length incl. trailing newline
+    raw_line     TEXT    NOT NULL,
+    device_id    TEXT,
+    event_utc    TEXT,
+    alarm_code   TEXT,
+    source_path  TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_forensics_items_job
+    ON forensics_items (job_id, file_id, byte_offset);
+CREATE INDEX IF NOT EXISTS idx_forensics_snap_job
+    ON forensics_file_snapshots (job_id);
+CREATE INDEX IF NOT EXISTS idx_forensics_jobs_status
+    ON forensics_jobs (status);
 """
 
 _init_lock = threading.Lock()

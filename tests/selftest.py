@@ -105,6 +105,7 @@ def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="alarm-selftest-"))
     shared = tmp / "shared"
     dbp = tmp / "wh" / "alarms.db"
+    evidence = tmp / "evidence"
     shared.mkdir(parents=True)
     port = free_port()
     env = dict(os.environ)
@@ -112,6 +113,7 @@ def main() -> int:
     # local --target dir); in the container the site-packages already exist.
     env["PYTHONPATH"] = str(ROOT) + os.pathsep + env.get("PYTHONPATH", "")
     env.update({"SHARED_DIR": str(shared), "DB_PATH": str(dbp),
+                "EVIDENCE_DIR": str(evidence),
                 "SCAN_INTERVAL": "0.1", "MAX_GENERATIONS": "3",
                 "ALLOW_TEST_SHUTDOWN": "1"})
 

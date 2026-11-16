@@ -8,15 +8,21 @@ services:
     build: .
     image: alarm-ingest:latest
     command: ["web"]
+    # Forensic packages are streamed to disk in constant memory; the web
+    # process must stay within 128 MiB even when sources exceed RAM.
+    mem_limit: 128m
+    mem_reservation: 64m
     environment:
       SHARED_DIR: /data/shared
       DB_PATH: /data/warehouse/alarms.db
+      EVIDENCE_DIR: /data/evidence
       MAX_GENERATIONS: "3"
     ports:
       - "8000:8000"
     volumes:
       - shared_data:/data/shared
       - db_data:/data/warehouse
+      - evidence_data:/data/evidence
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz', timeout=3).status==200 else 1)"]
       interval: 10s
@@ -59,3 +65,4 @@ services:
 volumes:
   shared_data:
   db_data:
+  evidence_data:

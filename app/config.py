@@ -12,6 +12,14 @@ SHARED_DIR = Path(os.getenv("SHARED_DIR", "/data/shared")).resolve()
 # SQLite database file (lives on its own volume in compose).
 DB_PATH = Path(os.getenv("DB_PATH", "/data/warehouse/alarms.db")).resolve()
 
+# Forensic evidence packages are written here (its own compose volume so
+# temporary and finished ZIPs stay on disk, never in the page cache budget).
+EVIDENCE_DIR = Path(os.getenv("EVIDENCE_DIR", "/data/evidence")).resolve()
+
+# Streaming chunk size used while copying source prefixes into evidence ZIPs.
+# Bounded memory regardless of source file size.
+FORENSICS_CHUNK = int(os.getenv("FORENSICS_CHUNK", str(1024 * 1024)))
+
 # File name the gateway is currently appending to.
 CURRENT_FILE = os.getenv("CURRENT_FILE", "alarms.jsonl")
 
