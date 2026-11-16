@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>报警日志网关 · 采集演示</title>
+<style>
+  :root { --bd:#d8dee9; --bg:#f7f9fc; --ac:#2563eb; --ok:#15803d; --warn:#b45309; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.5 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft Yahei",sans-serif; color:#1f2937; background:var(--bg); }
+  header { background:#111827; color:#fff; padding:14px 22px; display:flex; align-items:baseline; gap:16px; flex-wrap:wrap; }
+  header h1 { font-size:17px; margin:0; }
+  header .auto { margin-left:auto; display:flex; gap:8px; align-items:center; font-size:13px; }
+  main { display:grid; grid-template-columns: 1fr 1fr; gap:16px; padding:16px 22px; }
+  .card { background:#fff; border:1px solid var(--bd); border-radius:10px; padding:14px 16px; }
+  .card h2 { font-size:15px; margin:0 0 10px; }
+  .card.full { grid-column: 1 / -1; }
+  button { border:1px solid var(--ac); background:var(--ac); color:#fff; border-radius:7px; padding:7px 13px; cursor:pointer; font-size:13px; }
+  button.secondary { background:#fff; color:var(--ac); }
+  button.danger { border-color:#b91c1c; background:#b91c1c; }
+  button:disabled { opacity:.45; cursor:default; }
+  input, select { padding:7px 9px; border:1px solid var(--bd); border-radius:7px; font-size:13px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px; align-items:center; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  th, td { border-bottom:1px solid #e5e7eb; padding:6px 8px; text-align:left; vertical-align:top; }
+  th { background:#f3f4f6; position:sticky; top:0; }
+  .pill { display:inline-block; padding:1px 8px; border-radius:999px; font-size:12px; }
+  .pill.ok { background:#dcfce7; color:var(--ok); }
+  .pill.warn { background:#fef3c7; color:var(--warn); }
+  .pill.err { background:#fee2e2; color:#b91c1c; }
+  .muted { color:#6b7280; }
+  code { background:#f3f4f6; padding:1px 5px; border-radius:4px; }
+  pre { margin:0; white-space:pre-wrap; word-break:break-all; }
+  .stat { display:inline-block; margin-right:18px; }
+  .stat b { font-size:18px; }
+  #toast { position:fixed; right:18px; bottom:18px; max-width:420px; }
+  .toast-item { background:#111827; color:#fff; border-radius:8px; padding:9px 13px; margin-top:8px; font-size:13px; }
+  .toast-item.err { background:#b91c1c; }
+</style>
+</head>
+<body>
+<header>
+  <h1>工厂报警 JSONL 网关 · 双采集进程入仓演示</h1>
+  <span class="muted" style="color:#9ca3af">改名轮转 · 不删不截 · 最多 3 件</span>
+  <div class="auto">
+    <label><input type="checkbox" id="auto" checked> 2 秒自动刷新</label>
+    <button class="secondary" onclick="refresh()">立即刷新</button>
+  </div>
+</header>
+
+<main>
+  <section class="card">
+    <h2>① 网关控制 — 追加 / 轮转</h2>
+    <div class="row">
+      <select id="fileSel" title="目标文件"></select>
+      <input id="device" placeholder="设备号 device_id" size="16">
+      <input id="code" placeholder="报警码 alarm_code" size="14">
+      <button onclick="appendAlarm()">追加完整记录</button>
+    </div>
+    <div class="row">
+      <input id="frag" placeholder="无换行的半截 JSON（如 {&quot;device_id&quot;:&quot;dev-1&quot;）" size="42">
+      <button class="secondary" onclick="appendFragment()">写入半行(无换行)</button>
+      <button class="secondary" onclick="completeLine()">补换行完成该行</button>
+    </div>
+    <div class="row">
+      <button class="danger" onclick="rotate()">改名轮转（当前文件→.1，新建同名空文件）</button>
+      <span class="muted">旧文件仍可在上方下拉选中后追加补写</span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>② 采集进程心跳</h2>
+    <table><thead><tr><th>采集器</th><th>PID</th><th>状态</th><th>最近心跳 (UTC)</th><th>详情</th></tr></thead>
+      <tbody id="collectors"></tbody></table>
+    <h2 style="margin-top:14px">总览</h2>
+    <div id="stats"></div>
+  </section>
+
+  <section class="card full">
+    <h2>③ 共享目录文件与入仓位点（源文件身份 = dev/inode）</h2>
+    <table><thead><tr>
+      <th>磁盘文件</th><th>inode</th><th>磁盘字节</th>
+      <th>file_id（身份）</th><th>已提交字节位点</th><th>已入仓行数</th><th>位点状态</th>
+    </tr></thead><tbody id="files"></tbody></table>
+  </section>
+
+  <section class="card full">
+    <h2>④ 入仓记录（含源文件身份与字节位置，最新在前）</h2>
+    <table><thead><tr>
+      <th>#</th><th>设备号</th><th>UTC 时间</th><th>报警码</th>
+      <th>file_id</th><th>行号</th><th>字节偏移</th><th>源路径</th><th>采集者</th><th>原始行</th>
+    </tr></thead><tbody id="alarms"></tbody></table>
+  </section>
+
+  <section class="card full">
+    <h2>⑤ 采集错误（读取/解析失败时记录，位点不会推进）</h2>
+    <table><thead><tr><th>#</th><th>时间 (UTC)</th><th>类型</th><th>采集器</th><th>文件</th><th>信息</th></tr></thead>
+      <tbody id="errors"></tbody></table>
+  </section>
+</main>
+
+<div id="toast"></div>
+<script>
+const $ = id => document.getElementById(id);
+function toast(msg, isErr=false) {
+  const d = document.createElement('div');
+  d.className = 'toast-item' + (isErr ? ' err' : '');
+  d.textContent = msg; $('toast').appendChild(d);
+  setTimeout(() => d.remove(), 4000);
+}
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || r.statusText);
+  return data;
+}
+const post = (path, body) => api(path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})});
+
+async function appendAlarm() {
+  try {
+    const r = await post('/api/gateway/append', {
+      filename: $('fileSel').value || null,
+      device_id: $('device').value || null,
+      alarm_code: $('code').value || null,
+    });
+    toast(`已写入 ${r.file}（inode ${r.inode}，${r.size} 字节）`);
+    refresh();
+  } catch (e) { toast(e.message, true); }
+}
+async function appendFragment() {
+  try {
+    const r = await post('/api/gateway/fragment', {text: $('frag').value, filename: $('fileSel').value || null});
+    toast(`半行已写入 ${r.file}，采集器在换行前不会入仓`);
+    refresh();
+  } catch (e) { toast(e.message, true); }
+}
+async function completeLine() {
+  try {
+    await post('/api/gateway/complete', {tail: '\n', filename: $('fileSel').value || null});
+    toast('已补换行，等待采集器入仓');
+    refresh();
+  } catch (e) { toast(e.message, true); }
+}
+async function rotate() {
+  try {
+    const r = await post('/api/gateway/rotate');
+    toast(r.rotated ? '轮转完成，旧文件保留可补写' : '当前无文件，已新建空文件');
+    refresh();
+  } catch (e) { toast(e.message, true); }
+}
+
+function esc(s) { return String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+async function refresh() {
+  const [gw, st, fs, coll, al, er] = await Promise.all([
+    api('/api/gateway/files'), api('/api/stats'), api('/api/file-states'),
+    api('/api/collectors'), api('/api/alarms?limit=200'), api('/api/errors?limit=50'),
+  ]);
+
+  // file selector (keep selection)
+  const sel = $('fileSel'), prev = sel.value;
+  sel.innerHTML = '<option value="">（当前活动文件）</option>' +
+    gw.files.map(f => `<option value="${esc(f.name)}">${esc(f.name)}</option>`).join('');
+  if (prev) sel.value = prev;
+
+  // collectors
+  $('collectors').innerHTML = coll.items.length ? coll.items.map(c => `
+    <tr><td>${esc(c.collector_id)}</td><td>${c.pid}</td>
+      <td><span class="pill ${c.status==='running'?'ok':c.status==='error'?'err':'warn'}">${esc(c.status)}</span></td>
+      <td>${esc(c.last_beat_utc)}</td><td class="muted">${esc(c.detail||'')}</td></tr>`).join('')
+    : '<tr><td colspan="5" class="muted">暂无心跳（采集进程未启动？）</td></tr>';
+
+  // stats
+  $('stats').innerHTML = `
+    <span class="stat">入仓记录 <b>${st.alarm_rows}</b></span>
+    <span class="stat">跟踪文件 <b>${st.tracked_files}</b></span>
+    <span class="stat">已提交字节 <b>${st.committed_bytes}</b> / 磁盘 ${st.disk_bytes}</span>
+    <span class="pill ${st.fully_ingested ? 'ok' : 'warn'}">${st.fully_ingested ? '全部入仓' : '存在未入仓字节（半行或待采集）'}</span>`;
+
+  // files + states joined on inode
+  const stateByInode = {};
+  fs.items.forEach(s => { stateByInode[s.inode] = s; });
+  $('files').innerHTML = gw.files.map(f => {
+    const s = stateByInode[f.inode];
+    if (!s) return `<tr><td>${esc(f.name)}</td><td>${f.inode}</td><td>${f.size}</td>
+      <td colspan="4" class="muted">尚未被采集器发现</td></tr>`;
+    const done = s.read_offset >= f.size;
+    return `<tr><td>${esc(f.name)}</td><td>${f.inode}</td><td>${f.size}</td>
+      <td><code>${esc(s.file_id)}</code></td>
+      <td>${s.read_offset}</td><td>${s.line_count}</td>
+      <td><span class="pill ${done?'ok':'warn'}">${done?'已追平':'差 '+(f.size-s.read_offset)+' 字节'}</span></td></tr>`;
+  }).join('') || '<tr><td colspan="7" class="muted">目录为空</td></tr>';
+
+  // alarms
+  $('alarms').innerHTML = al.items.map(a => `
+    <tr><td>${a.id}</td><td>${esc(a.device_id)}</td><td>${esc(a.event_utc)}</td>
+      <td>${esc(a.alarm_code)}</td><td><code>${esc(a.file_id)}</code></td>
+      <td>${a.line_no}</td><td>${a.byte_offset}</td>
+      <td class="muted">${esc(a.source_path)}</td><td>${esc(a.ingested_by)}</td>
+      <td><pre>${esc(a.raw_line)}</pre></td></tr>`).join('')
+    || '<tr><td colspan="10" class="muted">暂无入仓记录</td></tr>';
+
+  // errors
+  $('errors').innerHTML = er.items.map(e => `
+    <tr><td>${e.id}</td><td>${esc(e.occurred_utc)}</td>
+      <td><span class="pill err">${esc(e.kind)}</span></td>
+      <td>${esc(e.collector_id)}</td><td class="muted">${esc(e.path||e.file_id||'')}</td>
+      <td><pre>${esc(e.message)}</pre></td></tr>`).join('')
+    || '<tr><td colspan="6" class="muted">无错误</td></tr>';
+}
+$('auto').addEventListener('change', () => {
+  clearInterval(window._t);
+  if ($('auto').checked) window._t = setInterval(refresh, 2000);
+});
+window._t = setInterval(refresh, 2000);
+refresh().catch(e => toast(e.message, true));
+</script>
+</body>
+</html>
